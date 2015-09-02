@@ -2,8 +2,10 @@ import requests
 import pandas as pd
 import numpy as np
 import json
+import threading
 import unicodedata
 import re
+from math import ceil
 
 
 def get_data():
@@ -14,42 +16,63 @@ def get_data():
 
 	transactions = []
 
-	#Check if there is actually data to grab
-	r = requests.get('http://resttest.bench.co/transactions/1.json')
+	url = 'http://resttest.bench.co/transactions/%d.json'
+
+	# Check if there is actually data to grab
+	r = requests.get(url%1)
 	code = r.status_code
 	if code != 200:
 	    return
 
-	#Convvert request object to json, and find number of transaction
+	# Convvert request object to json, and find number of transaction
 	info = r.json()
 	num_transactions = info['totalCount']
 
+	first_transactions = info['transactions']
 	transactions.extend(info['transactions'])
 
-	page_num = 2
-	while len(transactions) < num_transactions:
-	    r = requests.get('http://resttest.bench.co/transactions/%d.json'%page_num)
-	    info = r.json()
-	    transactions.extend(info['transactions'])
-	    page_num +=1
+	transactions_per_page = len(first_transactions)
+	num_pages = int(ceil(num_transactions*1./transactions_per_page))
+
+
+	threads = []
+	for page in xrange(2,num_pages+1,1):
+		t = threading.Thread(target = load_data, args = (url%page,transactions))
+		t.start()
+		threads.append(t)
+
+	for t in threads: t.join()
+
 
 	output = pd.DataFrame(transactions)
 
-		#Names an empty ledger as 'Payments'
+	# Names an empty ledger as 'Payments'
 	output['Ledger'] = output.Ledger.apply(lambda x: 'Payments' if x =="" else x)
 
-	#Convert the transaction amounts from strings to floats
+	# Convert the transaction amounts from strings to floats
 	output['Amount'] = output.Amount.apply(lambda x: float(x))
 
-	#Convert the date to a pandas datetime object
+	# Convert the date to a pandas datetime object
 	output['Date'] = output.Date.apply(lambda x: pd.to_datetime(x))
 
-	#Use clean_name function to remove garbage
+	# Use clean_name function to remove garbage
 	output['Company'] = output.Company.apply(lambda x: clean_names(x))
 
 	output.drop_duplicates(inplace = True)
 
 	return output.sort('Date')
+
+
+def load_data(url,lst):
+	"""A helper function to download the data through
+	multi-threading"""
+
+	r = requests.get(url)
+	if r.status_code != 200:
+		return
+
+	info = r.json()
+	lst.extend(info['transactions'])
 
 
 def clean_names(name):
@@ -89,12 +112,7 @@ def running_balance(data):
 	and the cumulative total up to that data"""
 
 	out = data.groupby('Date', as_index = True).sum()
-	running_total = []
-	total = 0
-	for amount in out.Amount.values:
-		total+= amount
-		running_total.append(total)
-	out['Cumulative_Amount'] = running_total
+	out['Cumulative Balance'] = out['Amount'].cumsum()
 
 	return out
 
@@ -120,22 +138,25 @@ if __name__=="__main__":
 		user_input = raw_input(display)
 
 		if not user_input:
-			user_input= 0
+			user_input = 0
 		else:
 			user_input = int(user_input)
+
 		run = user_input
+
 
 		if user_input == 1:
 			print "The balance is: ${0:.2f}".format(round(get_balance(data),2))
 
-		elif user_input ==2:
+		elif user_input == 2:
 			print expenses_by_cat.to_string()
 
-		elif user_input ==3:
+		elif user_input == 3:
 			print running_balance.to_string()
 
 		elif user_input == 4:
 			print data.to_string()
+
 		else:
 			break
 
