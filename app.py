@@ -115,6 +115,7 @@ def running_balance(data):
 	out['Cumulative Balance'] = out['Amount'].cumsum()
 
 	return out
+	
 
 if __name__=="__main__":
 
